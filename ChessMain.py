@@ -1,4 +1,6 @@
+import os
 import pygame as pg
+from ChessEngine import GameState
 
 WIDTH = 512
 HEIGHT = 512
@@ -9,9 +11,10 @@ MAX_FPS = 15
 IMAGES = {}
 
 def load_images():
-    pieces = ['wp', 'wR', 'wN', 'wB', 'wQ', 'wK', 'bp', 'bR', 'bN', 'bB', 'bQ', 'bK']
+    pieces = ['wP', 'wR', 'wN', 'wB', 'wQ', 'wK', 'bP', 'bR', 'bN', 'bB', 'bQ', 'bK']
     for piece in pieces:
-        IMAGES[piece] = pg.transform.scale(pg.image.load("images/" + piece + ".png"), (SQ_SIZE, SQ_SIZE))
+        path = os.path.join(os.path.dirname(__file__), "images", piece + ".png")
+        IMAGES[piece] = pg.transform.scale(pg.image.load(path), (SQ_SIZE, SQ_SIZE))
 
 def main():
     pg.init()
