@@ -20,14 +20,20 @@ class GameState():
         self.blackKingLocation = (0, 4)
         self.checkmate = False
         self.stalemate = False
-        
+        self.draw = False          # True when any draw condition is triggered
+        self.drawReason = ""       # Human-readable reason for the draw
+
+        # 50-move rule: counts half-moves since last pawn move or capture
+        self.halfMoveClock = 0
+        self.halfMoveClockLog = [0]
+
         # En passant
         self.enpassantPossible = ()  # Coordinates where an en passant capture is possible
         self.enpassantPossibleLog = [self.enpassantPossible]
-        
+
         # Castling rights
         self.currentCastlingRights = CastleRights(True, True, True, True)
-        self.castleRightsLog = [CastleRights(self.currentCastlingRights.wks, self.currentCastlingRights.bks, 
+        self.castleRightsLog = [CastleRights(self.currentCastlingRights.wks, self.currentCastlingRights.bks,
                                              self.currentCastlingRights.wqs, self.currentCastlingRights.bqs)]
 
     def makeMove(self, move):
@@ -68,9 +74,16 @@ class GameState():
                 self.board[move.endRow][move.endCol+1] = self.board[move.endRow][move.endCol-2]  # Move rook
                 self.board[move.endRow][move.endCol-2] = '--'
                 
+        # Update 50-move clock (reset on pawn move or capture, else increment)
+        if move.pieceMoved[1] == 'P' or move.pieceCaptured != '--':
+            self.halfMoveClock = 0
+        else:
+            self.halfMoveClock += 1
+        self.halfMoveClockLog.append(self.halfMoveClock)
+
         # Update castling rights
         self.updateCastleRights(move)
-        self.castleRightsLog.append(CastleRights(self.currentCastlingRights.wks, self.currentCastlingRights.bks, 
+        self.castleRightsLog.append(CastleRights(self.currentCastlingRights.wks, self.currentCastlingRights.bks,
                                                  self.currentCastlingRights.wqs, self.currentCastlingRights.bqs))
 
     def undoMove(self):
@@ -93,12 +106,16 @@ class GameState():
                 
             self.enpassantPossibleLog.pop()
             self.enpassantPossible = self.enpassantPossibleLog[-1]
-            
+
+            # Undo 50-move clock
+            self.halfMoveClockLog.pop()
+            self.halfMoveClock = self.halfMoveClockLog[-1]
+
             # Undo castling rights
             self.castleRightsLog.pop()
             newRights = self.castleRightsLog[-1]
             self.currentCastlingRights = CastleRights(newRights.wks, newRights.bks, newRights.wqs, newRights.bqs)
-            
+
             # Undo castle move
             if move.isCastleMove:
                 if move.endCol - move.startCol == 2:  # King side
@@ -107,9 +124,11 @@ class GameState():
                 else:  # Queen side
                     self.board[move.endRow][move.endCol-2] = self.board[move.endRow][move.endCol+1]
                     self.board[move.endRow][move.endCol+1] = '--'
-            
+
             self.checkmate = False
             self.stalemate = False
+            self.draw = False
+            self.drawReason = ""
 
     def updateCastleRights(self, move):
         if move.pieceMoved == 'wK':
@@ -173,13 +192,66 @@ class GameState():
                 self.checkmate = True
             else:
                 self.stalemate = True
+                self.draw = True
+                self.drawReason = "Stalemate"
         else:
             self.checkmate = False
             self.stalemate = False
-            
+
+        # Check draw conditions even when moves remain
+        if not self.checkmate:
+            if self.isFiftyMoveRule():
+                self.draw = True
+                self.drawReason = "Draw by 50-move rule"
+            elif self.isInsufficientMaterial():
+                self.draw = True
+                self.drawReason = "Draw by insufficient material"
+
         self.enpassantPossible = tempEnpassantPossible
         self.currentCastlingRights = tempCastleRights
         return moves
+
+    def isFiftyMoveRule(self):
+        """Returns True if 50 full moves (100 half-moves) have passed without a pawn move or capture."""
+        return self.halfMoveClock >= 100
+
+    def isInsufficientMaterial(self):
+        """Returns True when neither side can force checkmate."""
+        whitePieces = []
+        blackPieces = []
+        whiteBishopColors = []
+        blackBishopColors = []
+        for r in range(8):
+            for c in range(8):
+                piece = self.board[r][c]
+                if piece == '--':
+                    continue
+                color, ptype = piece[0], piece[1]
+                if ptype in ('Q', 'R', 'P'):
+                    return False  # Sufficient mating material
+                if color == 'w':
+                    whitePieces.append(ptype)
+                    if ptype == 'B':
+                        whiteBishopColors.append((r + c) % 2)
+                else:
+                    blackPieces.append(ptype)
+                    if ptype == 'B':
+                        blackBishopColors.append((r + c) % 2)
+
+        # K vs K
+        if len(whitePieces) == 1 and len(blackPieces) == 1:
+            return True
+        # K+N vs K  or  K+B vs K
+        if (len(whitePieces) == 2 and whitePieces.count('K') == 1 and len(blackPieces) == 1):
+            return True
+        if (len(blackPieces) == 2 and blackPieces.count('K') == 1 and len(whitePieces) == 1):
+            return True
+        # K+B vs K+B same colored bishops
+        if (len(whitePieces) == 2 and 'B' in whitePieces and
+                len(blackPieces) == 2 and 'B' in blackPieces):
+            if whiteBishopColors and blackBishopColors and whiteBishopColors[0] == blackBishopColors[0]:
+                return True
+        return False
 
     def inCheck(self):
         if self.whiteToMove:
