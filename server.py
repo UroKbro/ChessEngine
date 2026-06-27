@@ -12,11 +12,13 @@ players = {}  # sid -> 'white' | 'black'
 
 @socketio.on('connect')
 def handle_connect():
-    if len(players) == 0:
+    assigned_colors = set(players.values())
+
+    if 'white' not in assigned_colors:
         players[request.sid] = 'white'
         emit('color', {'color': 'white'})
         print("Player 1 connected as WHITE")
-    elif len(players) == 1:
+    elif 'black' not in assigned_colors:
         players[request.sid] = 'black'
         emit('color', {'color': 'black'})
         print("Player 2 connected as BLACK")
