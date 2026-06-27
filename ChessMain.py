@@ -48,7 +48,7 @@ def on_move(data):
 
 def _connect():
     try:
-        sio.connect(SERVER_URL, transports=['websocket', 'polling'])
+        sio.connect(SERVER_URL)
     except Exception as e:
         print(f"[Network] Could not connect to server: {e}")
 
