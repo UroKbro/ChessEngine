@@ -35,8 +35,6 @@ SERVER_URL = os.environ.get("CHESS_SERVER_URL", "http://localhost:5000")
 
 incoming_moves = queue.Queue()
 my_color = None  # 'white' or 'black' — assigned by server
-clock_state = {True: float(CLOCK_START_SECONDS), False: float(CLOCK_START_SECONDS)}
-game_started = False
 
 @sio.on('color')
 def on_color(data):
@@ -47,13 +45,6 @@ def on_color(data):
 @sio.on('move')
 def on_move(data):
     incoming_moves.put(data)
-
-@sio.on('state')
-def on_state(data):
-    global clock_state, game_started
-    clock_state[True] = float(data['whiteTime'])
-    clock_state[False] = float(data['blackTime'])
-    game_started = bool(data.get('gameStarted', False))
 
 def _connect():
     try:
@@ -90,7 +81,7 @@ def main():
     game_over    = False
     load_images()
 
-    player_time = clock_state.copy()
+    player_time = {True: float(CLOCK_START_SECONDS), False: float(CLOCK_START_SECONDS)}
     last_tick   = time.monotonic()
 
     while True:
@@ -99,9 +90,7 @@ def main():
         last_tick = now
 
         if not game_over:
-            player_time = clock_state.copy()
-            if game_started:
-                player_time[gs.whiteToMove] = max(0.0, player_time[gs.whiteToMove] - delta)
+            player_time[gs.whiteToMove] -= delta
             if player_time[gs.whiteToMove] <= 0:
                 player_time[gs.whiteToMove] = 0
                 game_over = True

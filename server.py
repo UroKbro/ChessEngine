@@ -12,7 +12,6 @@ players = {}  # sid -> 'white' | 'black'
 clock_state = {
     'whiteTime': 10 * 60.0,
     'blackTime': 10 * 60.0,
-    'gameStarted': False,
 }
 
 @socketio.on('connect')
@@ -27,12 +26,9 @@ def handle_connect():
         players[request.sid] = 'black'
         emit('color', {'color': 'black'})
         print("Player 2 connected as BLACK")
-        clock_state['gameStarted'] = True
     else:
         print("Room full, rejecting connection")
         return False  # reject
-
-    emit('state', clock_state)
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -42,13 +38,8 @@ def handle_disconnect():
 @socketio.on('move')
 def handle_move(data):
     print("Move received:", data)
-    if not clock_state['gameStarted']:
-        return
-    clock_state['whiteTime'] = max(0.0, float(data.get('whiteTime', clock_state['whiteTime'])))
-    clock_state['blackTime'] = max(0.0, float(data.get('blackTime', clock_state['blackTime'])))
     # Relay to the OTHER player only
     emit('move', data, broadcast=True, include_self=False)
-    emit('state', clock_state, broadcast=True)
 
 if __name__ == '__main__':
     print(f"Chess server running on port {PORT}")
