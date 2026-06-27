@@ -1,8 +1,12 @@
 import os
 import time
+import queue
+import threading
 import ChessEngine
+
 import pygame as pg
 from ChessEngine import GameState
+import socketio
 
 BOARD_SIZE  = 512
 PANEL_WIDTH = 140
@@ -25,6 +29,29 @@ LOW_COLOR   = (174, 67,  54)
 DIVIDER     = (224, 224, 219)
 
 _FONTS = {}
+
+sio = socketio.Client()
+
+incoming_moves = queue.Queue()
+my_color = None  # 'white' or 'black' — assigned by server
+
+@sio.on('color')
+def on_color(data):
+    global my_color
+    my_color = data['color']
+    print(f"You are playing as {my_color.upper()}")
+
+@sio.on('move')
+def on_move(data):
+    incoming_moves.put(data)
+
+def _connect():
+    try:
+        sio.connect('http://localhost:5000')
+    except Exception as e:
+        print(f"[Network] Could not connect to server: {e}")
+
+threading.Thread(target=_connect, daemon=True).start()
 
 def _font(size, bold=False):
     key = (size, bold)
@@ -76,6 +103,11 @@ def main():
                 return
 
             elif e.type == pg.MOUSEBUTTONDOWN and not game_over:
+                is_my_turn = (my_color is None or
+                              (my_color == 'white' and gs.whiteToMove) or
+                              (my_color == 'black' and not gs.whiteToMove))
+                if not is_my_turn:
+                    continue
                 col = pg.mouse.get_pos()[0] // SQ_SIZE
                 row = pg.mouse.get_pos()[1] // SQ_SIZE
                 if col >= DIMENSION or row >= DIMENSION or col < 0 or row < 0:
@@ -104,6 +136,11 @@ def main():
                             gs.makeMove(vm)
                             print(vm.getChessNotation())
                             moveMade = matched = animate = True
+                            if sio.connected:
+                                sio.emit('move', {
+                                    'startRow': vm.startRow, 'startCol': vm.startCol,
+                                    'endRow':   vm.endRow,   'endCol':   vm.endCol
+                                })
                             break
                     if not matched:
                         piece = gs.board[row][col]
@@ -136,6 +173,21 @@ def main():
                     player_time  = {True: float(CLOCK_START_SECONDS),
                                     False: float(CLOCK_START_SECONDS)}
                     last_tick    = time.monotonic()
+
+        # Process incoming network moves from opponent
+        while not incoming_moves.empty():
+            data = incoming_moves.get()
+            net_move = ChessEngine.Move(
+                (data['startRow'], data['startCol']),
+                (data['endRow'],   data['endCol']),
+                gs.board
+            )
+            for vm in validMoves:
+                if net_move == vm:
+                    animate_move(vm, screen, gs.board, clock)
+                    gs.makeMove(vm)
+                    validMoves = gs.getValidMoves()
+                    break
 
         if moveMade:
             if animate and gs.moveLog:
