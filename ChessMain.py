@@ -31,6 +31,7 @@ DIVIDER     = (224, 224, 219)
 _FONTS = {}
 
 sio = socketio.Client()
+SERVER_URL = os.environ.get("CHESS_SERVER_URL", "http://localhost:5000")
 
 incoming_moves = queue.Queue()
 my_color = None  # 'white' or 'black' — assigned by server
@@ -47,7 +48,7 @@ def on_move(data):
 
 def _connect():
     try:
-        sio.connect('http://localhost:5000')
+        sio.connect(SERVER_URL, transports=['websocket', 'polling'])
     except Exception as e:
         print(f"[Network] Could not connect to server: {e}")
 

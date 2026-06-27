@@ -3,7 +3,7 @@ from flask import Flask, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 players = {}  # sid -> 'white' | 'black'
 
@@ -35,4 +35,4 @@ def handle_move(data):
 if __name__ == '__main__':
     print("Chess server running on port 5000")
     print("Share your IP address with your friend to play!")
-    socketio.run(app, host='0.0.0.0', port=5000)
+    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
