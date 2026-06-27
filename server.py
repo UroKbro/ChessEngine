@@ -12,7 +12,7 @@ players = {}  # sid -> 'white' | 'black'
 clock_state = {
     'whiteTime': 10 * 60.0,
     'blackTime': 10 * 60.0,
-    'activeColor': 'white',
+    'gameStarted': False,
 }
 
 @socketio.on('connect')
@@ -27,6 +27,7 @@ def handle_connect():
         players[request.sid] = 'black'
         emit('color', {'color': 'black'})
         print("Player 2 connected as BLACK")
+        clock_state['gameStarted'] = True
     else:
         print("Room full, rejecting connection")
         return False  # reject
@@ -41,15 +42,10 @@ def handle_disconnect():
 @socketio.on('move')
 def handle_move(data):
     print("Move received:", data)
-    active = clock_state['activeColor']
-    if active == 'white':
-        clock_state['whiteTime'] = max(0.0, float(data.get('whiteTime', clock_state['whiteTime'])))
-        clock_state['blackTime'] = max(0.0, float(data.get('blackTime', clock_state['blackTime'])))
-        clock_state['activeColor'] = 'black'
-    else:
-        clock_state['whiteTime'] = max(0.0, float(data.get('whiteTime', clock_state['whiteTime'])))
-        clock_state['blackTime'] = max(0.0, float(data.get('blackTime', clock_state['blackTime'])))
-        clock_state['activeColor'] = 'white'
+    if not clock_state['gameStarted']:
+        return
+    clock_state['whiteTime'] = max(0.0, float(data.get('whiteTime', clock_state['whiteTime'])))
+    clock_state['blackTime'] = max(0.0, float(data.get('blackTime', clock_state['blackTime'])))
     # Relay to the OTHER player only
     emit('move', data, broadcast=True, include_self=False)
     emit('state', clock_state, broadcast=True)

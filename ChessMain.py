@@ -36,8 +36,7 @@ SERVER_URL = os.environ.get("CHESS_SERVER_URL", "http://localhost:5000")
 incoming_moves = queue.Queue()
 my_color = None  # 'white' or 'black' — assigned by server
 clock_state = {True: float(CLOCK_START_SECONDS), False: float(CLOCK_START_SECONDS)}
-active_color = 'white'
-turn_started_at = time.monotonic()
+game_started = False
 
 @sio.on('color')
 def on_color(data):
@@ -51,11 +50,10 @@ def on_move(data):
 
 @sio.on('state')
 def on_state(data):
-    global clock_state, active_color, turn_started_at
+    global clock_state, game_started
     clock_state[True] = float(data['whiteTime'])
     clock_state[False] = float(data['blackTime'])
-    active_color = data['activeColor']
-    turn_started_at = time.monotonic()
+    game_started = bool(data.get('gameStarted', False))
 
 def _connect():
     try:
@@ -76,19 +74,6 @@ def load_images():
     for p in pieces:
         path = os.path.join(os.path.dirname(__file__), "images", p + ".png")
         IMAGES[p] = pg.transform.scale(pg.image.load(path), (SQ_SIZE, SQ_SIZE))
-
-def board_flipped():
-    return my_color == 'black'
-
-def to_screen(r, c):
-    if board_flipped():
-        return DIMENSION - 1 - r, DIMENSION - 1 - c
-    return r, c
-
-def from_screen(r, c):
-    if board_flipped():
-        return DIMENSION - 1 - r, DIMENSION - 1 - c
-    return r, c
 
 def main():
     pg.init()
@@ -115,10 +100,8 @@ def main():
 
         if not game_over:
             player_time = clock_state.copy()
-            if active_color == 'white':
-                player_time[True] = max(0.0, clock_state[True] - (now - turn_started_at))
-            else:
-                player_time[False] = max(0.0, clock_state[False] - (now - turn_started_at))
+            if game_started:
+                player_time[gs.whiteToMove] = max(0.0, player_time[gs.whiteToMove] - delta)
             if player_time[gs.whiteToMove] <= 0:
                 player_time[gs.whiteToMove] = 0
                 game_over = True
@@ -141,7 +124,6 @@ def main():
                 row = pg.mouse.get_pos()[1] // SQ_SIZE
                 if col >= DIMENSION or row >= DIMENSION or col < 0 or row < 0:
                     continue
-                row, col = from_screen(row, col)
 
                 if sq_Selected == (row, col):
                     sq_Selected  = ()
@@ -170,7 +152,7 @@ def main():
                                 sio.emit('move', {
                                     'startRow': vm.startRow, 'startCol': vm.startCol,
                                     'endRow': vm.endRow, 'endCol': vm.endCol,
-                                    'whiteTime': player_time[True], 'blackTime': player_time[False]
+                                'whiteTime': player_time[True], 'blackTime': player_time[False]
                                 })
                             break
                     if not matched:
@@ -252,22 +234,18 @@ def animate_move(move, screen, board, clock):
         for sq in [(move.startRow, move.startCol), (move.endRow, move.endCol)]:
             hl = pg.Surface((SQ_SIZE, SQ_SIZE), pg.SRCALPHA)
             hl.fill((180, 160, 100, 80))
-            sr, sc = to_screen(*sq)
-            screen.blit(hl, (sc * SQ_SIZE, sr * SQ_SIZE))
+            screen.blit(hl, (sq[1] * SQ_SIZE, sq[0] * SQ_SIZE))
         for r in range(DIMENSION):
             for c in range(DIMENSION):
                 piece = board[r][c]
                 if piece != "--":
                     if frame < ANIMATION_FRAMES and r == move.endRow and c == move.endCol:
                         continue
-                    sr, sc = to_screen(r, c)
-                    screen.blit(IMAGES[piece], pg.Rect(sc*SQ_SIZE, sr*SQ_SIZE, SQ_SIZE, SQ_SIZE))
+                    screen.blit(IMAGES[piece], pg.Rect(c*SQ_SIZE, r*SQ_SIZE, SQ_SIZE, SQ_SIZE))
         if move.pieceMoved in IMAGES:
-            sr0, sc0 = to_screen(move.startRow, move.startCol)
-            sr1, sc1 = to_screen(move.endRow, move.endCol)
             screen.blit(IMAGES[move.pieceMoved],
-                        pg.Rect((sc0 + (sc1 - sc0)*t)*SQ_SIZE,
-                                (sr0 + (sr1 - sr0)*t)*SQ_SIZE, SQ_SIZE, SQ_SIZE))
+                        pg.Rect((move.startCol + dc*t)*SQ_SIZE,
+                                (move.startRow + dr*t)*SQ_SIZE, SQ_SIZE, SQ_SIZE))
         pg.display.flip()
         clock.tick(MAX_FPS)
 
@@ -284,30 +262,26 @@ def highlight_squares(screen, gs, validMoves, sq_Selected):
         for sq in [(last.startRow, last.startCol), (last.endRow, last.endCol)]:
             s = pg.Surface((SQ_SIZE, SQ_SIZE), pg.SRCALPHA)
             s.fill((180, 160, 80, 70))
-            sr, sc = to_screen(*sq)
-            screen.blit(s, (sc*SQ_SIZE, sr*SQ_SIZE))
+            screen.blit(s, (sq[1]*SQ_SIZE, sq[0]*SQ_SIZE))
 
     if sq_Selected:
         r, c = sq_Selected
         if gs.board[r][c][0] == ('w' if gs.whiteToMove else 'b'):
             sel = pg.Surface((SQ_SIZE, SQ_SIZE), pg.SRCALPHA)
             sel.fill((80, 120, 200, 90))
-            sr, sc = to_screen(r, c)
-            screen.blit(sel, (sc*SQ_SIZE, sr*SQ_SIZE))
+            screen.blit(sel, (c*SQ_SIZE, r*SQ_SIZE))
             for move in validMoves:
                 if move.startRow == r and move.startCol == c:
                     dot = pg.Surface((SQ_SIZE, SQ_SIZE), pg.SRCALPHA)
                     pg.draw.circle(dot, (40, 40, 40, 90),
                                    (SQ_SIZE//2, SQ_SIZE//2), SQ_SIZE//7)
-                    er, ec = to_screen(move.endRow, move.endCol)
-                    screen.blit(dot, (ec*SQ_SIZE, er*SQ_SIZE))
+                    screen.blit(dot, (move.endCol*SQ_SIZE, move.endRow*SQ_SIZE))
 
     if gs.inCheck():
         king = gs.whiteKingLocation if gs.whiteToMove else gs.blackKingLocation
         ks = pg.Surface((SQ_SIZE, SQ_SIZE), pg.SRCALPHA)
         ks.fill((200, 50, 50, 110))
-        kr, kc = to_screen(*king)
-        screen.blit(ks, (kc*SQ_SIZE, kr*SQ_SIZE))
+        screen.blit(ks, (king[1]*SQ_SIZE, king[0]*SQ_SIZE))
 
 
 def draw_board(screen):
