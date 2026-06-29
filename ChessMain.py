@@ -102,6 +102,7 @@ def load_images():
         IMAGES[p] = pg.transform.scale(pg.image.load(path), (SQ_SIZE, SQ_SIZE))
 
 def main():
+    pg.mixer.init()
     pg.init()
     screen = pg.display.set_mode((WIDTH, HEIGHT))
     pg.display.set_caption("Chess")
@@ -148,8 +149,10 @@ def main():
                                 global my_color
                                 my_color = None
                                 in_menu = False
+                                start_music()
                             elif label == "Play Online":
                                 in_menu = False
+                                start_music()
                                 threading.Thread(target=_connect, daemon=True).start()
                     continue
 
@@ -439,6 +442,14 @@ def draw_end_overlay(screen, title, subtitle=""):
     screen.blit(s_surf, (BOARD_SIZE//2 - s_surf.get_width()//2,
                          box_y + pad + t_surf.get_height() + 10))
 
+def start_music():
+    try:
+        music_path = os.path.join(os.path.dirname(__file__), "BEAT.mp3")
+        if os.path.exists(music_path):
+            pg.mixer.music.load(music_path)
+            pg.mixer.music.play(-1)  # Loop indefinitely
+    except Exception as e:
+        print(f"Could not load or play music: {e}")
 
 if __name__ == "__main__":
     main()
