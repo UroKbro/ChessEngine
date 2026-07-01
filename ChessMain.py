@@ -7,6 +7,7 @@ import ChessEngine
 import pygame as pg
 from ChessEngine import GameState
 import socketio
+import math
 
 BOARD_SIZE  = 512
 PANEL_WIDTH = 220
@@ -20,13 +21,13 @@ ANIMATION_FRAMES = 6
 
 CLOCK_START_SECONDS = 10 * 60
 
-PANEL_BG    = (20,  22,  26)
-TEXT_LIGHT  = (230, 235, 245)
-TEXT_MID    = (150, 155, 165)
-TEXT_DIM    = (100, 105, 115)
-ACTIVE_GLOW = (80,  200, 120)
+PANEL_BG    = (18, 20, 24)
+TEXT_LIGHT  = (235, 240, 245)
+TEXT_MID    = (160, 165, 170)
+TEXT_DIM    = (120, 125, 130)
+ACTIVE_GLOW = (90, 210, 140)
 LOW_COLOR   = (220, 70,  70)
-DIVIDER     = (40,  45,  55)
+DIVIDER     = (45, 50, 60)
 
 _FONTS = {}
 
@@ -116,6 +117,17 @@ def main():
     playerClicks = []
     game_over    = False
     in_menu      = True
+    
+    # Markup & Premove/arrow state
+    drawn_arrows = []
+    drawn_circles = []
+    premove_start_sq = ()
+    premove = None # stores (start_sq, end_sq) tuple
+    # Arrow drawing state (right-click)
+    arrow_start_sq = ()
+    arrow_preview_end = None
+    arrow_drawing = False
+    
     load_images()
 
     player_time = {True: float(CLOCK_START_SECONDS), False: float(CLOCK_START_SECONDS)}
@@ -159,60 +171,125 @@ def main():
                 if game_over:
                     continue
 
+                # get button and square
+                btn = e.button if hasattr(e, 'button') else 1
                 is_my_turn = (my_color is None or
                               (my_color == 'white' and gs.whiteToMove) or
                               (my_color == 'black' and not gs.whiteToMove))
-                if not is_my_turn:
-                    continue
                 col = pg.mouse.get_pos()[0] // SQ_SIZE
                 row = pg.mouse.get_pos()[1] // SQ_SIZE
                 if col >= DIMENSION or row >= DIMENSION or col < 0 or row < 0:
                     continue
                 row, col = screen_to_logic(row, col, my_color)
 
-                if sq_Selected == (row, col):
-                    sq_Selected  = ()
-                    playerClicks = []
-                else:
-                    sq_Selected = (row, col)
-                    playerClicks.append(sq_Selected)
+                # Right-click: start drawing arrow (preview on drag)
+                if btn == 3:
+                    if not arrow_drawing:
+                        arrow_start_sq = (row, col)
+                        arrow_drawing = True
+                        arrow_preview_end = (row, col)
+                    else:
+                        # should not normally happen on buttondown
+                        pass
+                    continue
 
-                if len(playerClicks) == 1:
-                    piece = gs.board[playerClicks[0][0]][playerClicks[0][1]]
-                    if (piece == "--"
-                            or (gs.whiteToMove and piece[0] == 'b')
-                            or (not gs.whiteToMove and piece[0] == 'w')):
+                # Left-click only: premoves when off-turn, normal moves when on-turn
+                if btn != 1:
+                    continue
+
+                # Off-turn: allow setting a premove (left-click while waiting)
+                if not is_my_turn and my_color is not None:
+                    # select start for premove
+                    if premove_start_sq == ():
+                        piece = gs.board[row][col]
+                        my_side = 'w' if my_color == 'white' else 'b'
+                        if piece != "--" and piece[0] == my_side:
+                            premove_start_sq = (row, col)
+                        else:
+                            # allow clearing existing premove
+                            premove = None
+                    else:
+                        # set premove end
+                        start = premove_start_sq
+                        end = (row, col)
+                        premove = (start, end)
+                        premove_start_sq = ()
+                        try:
+                            mv = ChessEngine.Move(start, end, gs.board)
+                            print(f"Premove set: {mv.getChessNotation()}")
+                        except Exception:
+                            print("Premove set")
+                    continue
+
+                # Normal on-turn move handling
+                if is_my_turn:
+                    if sq_Selected == (row, col):
                         sq_Selected  = ()
                         playerClicks = []
+                    else:
+                        sq_Selected = (row, col)
+                        playerClicks.append(sq_Selected)
 
-                if len(playerClicks) == 2:
-                    move    = ChessEngine.Move(playerClicks[0], playerClicks[1], gs.board)
-                    matched = False
-                    for vm in validMoves:
-                        if move == vm:
-                            gs.makeMove(vm)
-                            print(vm.getChessNotation())
-                            moveMade = matched = animate = True
-                            if sio.connected:
-                                sio.emit('move', {
-                                    'startRow': vm.startRow, 'startCol': vm.startCol,
-                                    'endRow': vm.endRow, 'endCol': vm.endCol,
-                                'whiteTime': player_time[True], 'blackTime': player_time[False]
-                                })
-                            break
-                    if not matched:
-                        piece = gs.board[row][col]
-                        if piece != "--" and (
-                                (gs.whiteToMove and piece[0] == 'w') or
-                                (not gs.whiteToMove and piece[0] == 'b')):
-                            sq_Selected  = (row, col)
-                            playerClicks = [sq_Selected]
+                    if len(playerClicks) == 1:
+                        piece = gs.board[playerClicks[0][0]][playerClicks[0][1]]
+                        if (piece == "--"
+                                or (gs.whiteToMove and piece[0] == 'b')
+                                or (not gs.whiteToMove and piece[0] == 'w')):
+                            sq_Selected  = ()
+                            playerClicks = []
+
+                    if len(playerClicks) == 2:
+                        move    = ChessEngine.Move(playerClicks[0], playerClicks[1], gs.board)
+                        matched = False
+                        for vm in validMoves:
+                            if move == vm:
+                                gs.makeMove(vm)
+                                print(vm.getChessNotation())
+                                moveMade = matched = animate = True
+                                premove = None
+                                if sio.connected:
+                                    sio.emit('move', {
+                                        'startRow': vm.startRow, 'startCol': vm.startCol,
+                                        'endRow': vm.endRow, 'endCol': vm.endCol,
+                                    'whiteTime': player_time[True], 'blackTime': player_time[False]
+                                    })
+                                break
+                        if not matched:
+                            piece = gs.board[row][col]
+                            if piece != "--" and (
+                                    (gs.whiteToMove and piece[0] == 'w') or
+                                    (not gs.whiteToMove and piece[0] == 'b')):
+                                sq_Selected  = (row, col)
+                                playerClicks = [sq_Selected]
+                            else:
+                                sq_Selected  = ()
+                                playerClicks = []
                         else:
                             sq_Selected  = ()
                             playerClicks = []
-                    else:
-                        sq_Selected  = ()
-                        playerClicks = []
+
+            elif e.type == pg.MOUSEMOTION:
+                # update arrow preview while dragging
+                if arrow_drawing:
+                    mcol = pg.mouse.get_pos()[0] // SQ_SIZE
+                    mrow = pg.mouse.get_pos()[1] // SQ_SIZE
+                    if 0 <= mcol < DIMENSION and 0 <= mrow < DIMENSION:
+                        arrow_preview_end = screen_to_logic(mrow, mcol, my_color)
+
+            elif e.type == pg.MOUSEBUTTONUP:
+                if hasattr(e, 'button') and e.button == 3 and arrow_drawing:
+                    # finish arrow
+                    up_col = pg.mouse.get_pos()[0] // SQ_SIZE
+                    up_row = pg.mouse.get_pos()[1] // SQ_SIZE
+                    if 0 <= up_col < DIMENSION and 0 <= up_row < DIMENSION:
+                        up_row, up_col = screen_to_logic(up_row, up_col, my_color)
+                        if arrow_start_sq == (up_row, up_col):
+                            # clear all arrows if clicked same square
+                            drawn_arrows = []
+                        else:
+                            drawn_arrows.append((arrow_start_sq, (up_row, up_col)))
+                    arrow_drawing = False
+                    arrow_preview_end = None
 
             elif e.type == pg.KEYDOWN:
                 if e.key == pg.K_z:
@@ -220,6 +297,7 @@ def main():
                     moveMade  = True
                     animate   = False
                     game_over = False
+                    premove = None
                 elif e.key == pg.K_r:
                     gs           = GameState()
                     validMoves   = gs.getValidMoves()
@@ -228,6 +306,7 @@ def main():
                     moveMade     = False
                     animate      = False
                     game_over    = False
+                    premove = None
                     player_time  = {True: float(CLOCK_START_SECONDS),
                                     False: float(CLOCK_START_SECONDS)}
                     last_tick    = time.monotonic()
@@ -246,6 +325,30 @@ def main():
                     gs.makeMove(vm)
                     validMoves = gs.getValidMoves()
                     break
+            # After applying opponent move, if we have a premove queued, try to execute it
+            if premove is not None:
+                try:
+                    pstart, pend = premove
+                    pmove = ChessEngine.Move(pstart, pend, gs.board)
+                    executed = False
+                    for vm in validMoves:
+                        if pmove == vm:
+                            animate_move(vm, screen, gs.board, clock)
+                            gs.makeMove(vm)
+                            validMoves = gs.getValidMoves()
+                            executed = True
+                            # send network move
+                            if sio.connected:
+                                sio.emit('move', {
+                                    'startRow': vm.startRow, 'startCol': vm.startCol,
+                                    'endRow': vm.endRow, 'endCol': vm.endCol,
+                                    'whiteTime': player_time[True], 'blackTime': player_time[False]
+                                })
+                            break
+                    if executed:
+                        premove = None
+                except Exception:
+                    premove = None
 
         if moveMade:
             if animate and gs.moveLog:
@@ -260,8 +363,19 @@ def main():
             continue
 
         screen.fill(PANEL_BG)
-        draw_game_state(screen, gs, validMoves, sq_Selected)
+        draw_game_state(screen, gs, validMoves, sq_Selected, drawn_arrows, arrow_start_sq if 'arrow_start_sq' in locals() else arrow_start_sq, arrow_preview_end if 'arrow_preview_end' in locals() else None, arrow_drawing)
         draw_panel(screen, gs, player_time)
+
+        # Draw premove indicator (destination circle)
+        if premove is not None:
+            try:
+                _, (er, ec) = premove
+                sr, sc = logic_to_screen(er, ec, my_color)
+                dot = pg.Surface((SQ_SIZE, SQ_SIZE), pg.SRCALPHA)
+                pg.draw.circle(dot, (60, 200, 120, 140), (SQ_SIZE//2, SQ_SIZE//2), SQ_SIZE//5)
+                screen.blit(dot, (sc*SQ_SIZE, sr*SQ_SIZE))
+            except Exception:
+                pass
 
         if gs.checkmate:
             game_over = True
@@ -305,9 +419,14 @@ def animate_move(move, screen, board, clock):
         clock.tick(MAX_FPS)
 
 
-def draw_game_state(screen, gs, validMoves, sq_Selected=()):
+def draw_game_state(screen, gs, validMoves, sq_Selected=(), arrows=None, arrow_start=None, arrow_preview=None, arrow_drawing_flag=False):
     draw_board(screen)
     highlight_squares(screen, gs, validMoves, sq_Selected)
+    # draw arrows (behind pieces)
+    try:
+        draw_arrows(screen, arrows or [], arrow_start, arrow_preview, arrow_drawing_flag)
+    except Exception:
+        pass
     draw_pieces(screen, gs.board)
 
 
@@ -343,14 +462,61 @@ def highlight_squares(screen, gs, validMoves, sq_Selected):
         screen.blit(ks, (kc*SQ_SIZE, kr*SQ_SIZE))
 
 
+def draw_arrows(screen, arrows, arrow_start, arrow_preview, arrow_drawing_flag):
+    """Draw saved arrows and a preview arrow if present."""
+    color = (66, 135, 245, 170)  # bluish semi-transparent
+    width = max(1, SQ_SIZE // 8)
+    # helper to draw a single arrow from logic coords
+    def draw_arrow(start, end, c=color):
+        sr, sc = logic_to_screen(start[0], start[1], my_color)
+        er, ec = logic_to_screen(end[0], end[1], my_color)
+        x1 = sc * SQ_SIZE + SQ_SIZE // 2
+        y1 = sr * SQ_SIZE + SQ_SIZE // 2
+        x2 = ec * SQ_SIZE + SQ_SIZE // 2
+        y2 = er * SQ_SIZE + SQ_SIZE // 2
+        # main line surface
+        line_surf = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
+        pg.draw.line(line_surf, c, (x1, y1), (x2, y2), width)
+        # arrowhead
+        vx = x2 - x1
+        vy = y2 - y1
+        dist = max(1, math.hypot(vx, vy))
+        ux = vx / dist
+        uy = vy / dist
+        # size of head
+        head_len = max(8, SQ_SIZE // 4)
+        left_x = x2 - ux * head_len - uy * (head_len // 2)
+        left_y = y2 - uy * head_len + ux * (head_len // 2)
+        right_x = x2 - ux * head_len + uy * (head_len // 2)
+        right_y = y2 - uy * head_len - ux * (head_len // 2)
+        pg.draw.polygon(line_surf, c, [(x2, y2), (left_x, left_y), (right_x, right_y)])
+        screen.blit(line_surf, (0, 0))
+
+    for a in arrows:
+        try:
+            draw_arrow(a[0], a[1])
+        except Exception:
+            pass
+    # preview arrow
+    if arrow_drawing_flag and arrow_start and arrow_preview:
+        try:
+            draw_arrow(arrow_start, arrow_preview, (200, 200, 80, 170))
+        except Exception:
+            pass
+
+
 def draw_board(screen):
-    light = (220, 220, 220)
-    dark  = (140, 45,  50)
+    # warmer wood-like colors
+    light = (240, 217, 181)
+    dark  = (181, 136, 99)
+    # board background with subtle border
+    board_rect = pg.Rect(0, 0, BOARD_SIZE, BOARD_SIZE)
+    pg.draw.rect(screen, (30, 28, 25), board_rect, border_radius=8)
     for r in range(DIMENSION):
         for c in range(DIMENSION):
             color = light if (r + c) % 2 == 0 else dark
             sr, sc = logic_to_screen(r, c, my_color)
-            pg.draw.rect(screen, color, pg.Rect(sc*SQ_SIZE, sr*SQ_SIZE, SQ_SIZE, SQ_SIZE))
+            pg.draw.rect(screen, color, pg.Rect(sc*SQ_SIZE + 2, sr*SQ_SIZE + 2, SQ_SIZE - 4, SQ_SIZE - 4), border_radius=4)
 
 
 def draw_pieces(screen, board):
@@ -359,6 +525,10 @@ def draw_pieces(screen, board):
             piece = board[r][c]
             if piece != "--":
                 sr, sc = logic_to_screen(r, c, my_color)
+                # soft shadow for depth
+                shadow = pg.Surface((SQ_SIZE, SQ_SIZE), pg.SRCALPHA)
+                pg.draw.ellipse(shadow, (10, 10, 10, 80), (SQ_SIZE*0.15, SQ_SIZE*0.6, SQ_SIZE*0.7, SQ_SIZE*0.25))
+                screen.blit(shadow, (sc*SQ_SIZE, sr*SQ_SIZE))
                 screen.blit(IMAGES[piece], pg.Rect(sc*SQ_SIZE, sr*SQ_SIZE, SQ_SIZE, SQ_SIZE))
 
 
@@ -444,7 +614,7 @@ def draw_end_overlay(screen, title, subtitle=""):
 
 def start_music():
     try:
-        music_path = os.path.join(os.path.dirname(__file__), "BEAT.mp3")
+        music_path = os.path.join(os.path.dirname(__file__), "audio", "BEAT.mp3")
         if os.path.exists(music_path):
             pg.mixer.music.load(music_path)
             pg.mixer.music.play(-1)  # Loop indefinitely
